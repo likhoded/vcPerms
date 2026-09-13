@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+.idea/
+.vscode/
+.cursor/
+*.wasm
+.DS_Store
+Thumbs.db
+AGENTS.md
+CLAUDE.md
+.cursorrules

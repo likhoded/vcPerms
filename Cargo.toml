@@ -1,0 +1,20 @@
+[package]
+name = "vcperms"
+version = "0.8.4"
+edition = "2024"
+description = "Groups, tracks and permission nodes for Pumpkin."
+license = "MIT"
+authors = ["likhoded"]
+repository = "https://github.com/likhoded/vcPerms"
+readme = "README.md"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+md-5 = "0.10"
+pumpkin-plugin-api = "=0.1.0-dev+26.2-26.45"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
