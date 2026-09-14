@@ -2,15 +2,13 @@
 
 **English** · [Русский](README.ru.md)
 
-Permission plugin for [Pumpkin](https://pumpkinmc.org). Groups, inheritance, tracks, contexts, temporary nodes, prefixes.
+**vcPerms** is a permission manager for Pumpkin. It decides which nodes a player has: through groups, inheritance, tracks, contexts, temporary permissions, prefixes and suffixes. Every permission check on the server goes through this plugin.
 
 Built against Pumpkin `0.1.0-dev+26.2-26.45` (Java protocol 776).
 
 ## Install
 
-1. `cargo build --release`
-2. Copy `target/wasm32-wasip2/release/vcperms.wasm` to `plugins/`
-3. In `pumpkin.toml`:
+Build with `cargo build --release` and put `target/wasm32-wasip2/release/vcperms.wasm` in `plugins/`. Allow data access in `pumpkin.toml`:
 
 ```toml
 [plugins]
@@ -18,11 +16,9 @@ ask_permission_confirmation = false
 allowed_permissions = ["fs.read.data", "fs.write.data"]
 ```
 
-4. Restart the server.
+On first boot the server writes `plugins/data/vcPerms/config.yml` and a `default` group.
 
-First boot writes `plugins/data/vcPerms/config.yml` and a `default` group.
-
-## Quick start
+## First commands
 
 ```
 /vcp creategroup admin
@@ -32,13 +28,31 @@ First boot writes `plugins/data/vcPerms/config.yml` and a `default` group.
 /vcp check Steve minecraft.command.gamemode
 ```
 
-Commands: `/vcp` and `/vcperms`.
+You manage it with `/vcp` and `/vcperms`. The console can always run them. In-game you need the `vcperms.*` node or operator status while `commands-allow-ops` is still enabled in the config.
 
-Console can always run them. In-game you need `vcperms.*`, or OP while `commands-allow-ops` is still on.
+A rank ladder is groups inheriting parents, a track listing them in order, and `promote` / `demote` moving the player.
 
-## What it stores
+```
+/vcp creategroup member
+/vcp creategroup vip
+/vcp group member parent add default
+/vcp group vip parent add member
+/vcp group admin parent add vip
+/vcp createtrack ranks
+/vcp track ranks append default
+/vcp track ranks append member
+/vcp track ranks append vip
+/vcp track ranks append admin
+/vcp user Steve promote ranks
+```
 
-JSON, one file per holder:
+## Other plugins
+
+Another wasm talks to `vcPerms` over host IPC and can check a node, read a prefix or list groups. The contract is in [API](wiki/API.md). vcEdit and vcGuard already send their nodes on load.
+
+## Storage
+
+Data is JSON, one file per player, group or track:
 
 ```
 plugins/data/vcPerms/
@@ -51,13 +65,13 @@ plugins/data/vcPerms/
   exports/
 ```
 
-`/vcp import` reads our own dumps. A LuckPerms JSON export usually loads as well if you are moving an old server over.
+`/vcp import` reads our dumps. A LuckPerms JSON export usually opens as well if you are moving an old server over.
 
 ## Docs
 
-Wiki: https://likhoded.github.io/vcPerms/
+https://likhoded.github.io/vcPerms/
 
-Source: [English](wiki/Home.md) · [Русский](wiki/ru/Home.md)
+Wiki sources: [English](wiki/Home.md) · [Русский](wiki/ru/Home.md)
 
 ## Build
 
