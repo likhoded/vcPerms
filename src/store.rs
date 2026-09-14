@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::holder::{Group, User};
-use crate::node::purge_expired;
+use crate::node::{purge_expired, Node};
 use crate::track::Track;
 use crate::util::offline_uuid;
 
@@ -22,6 +22,7 @@ pub struct Store {
     groups: HashMap<String, Group>,
     tracks: HashMap<String, Track>,
     cache: UuidCache,
+    known: BTreeSet<String>,
     dirty: bool,
 }
 
@@ -44,6 +45,7 @@ impl Store {
             groups: HashMap::new(),
             tracks: HashMap::new(),
             cache,
+            known: BTreeSet::new(),
             dirty: false,
         };
         store.load_all();
@@ -53,6 +55,9 @@ impl Store {
         if !store.groups.contains_key(&store.config.default_group) {
             store.ensure_group(&store.config.default_group.clone());
         }
+        store.load_known();
+        store.ingest_holder_nodes();
+        store.seed_own_nodes();
         store.save_all();
         store
     }
@@ -77,6 +82,7 @@ impl Store {
             write_json(&self.track_path(&track.name), track);
         }
         write_json(&self.dir.join("uuidcache.json"), &self.cache);
+        self.save_known();
         self.dirty = false;
     }
 
@@ -90,7 +96,95 @@ impl Store {
         self.config = Config::load_or_write(self.dir.to_str().unwrap_or("."));
         self.load_all();
         self.cache = read_json(&self.dir.join("uuidcache.json")).unwrap_or_default();
+        self.load_known();
+        self.ingest_holder_nodes();
         self.dirty = false;
+    }
+
+    fn load_known(&mut self) {
+        if let Ok(list) = read_json::<Vec<String>>(&self.dir.join("known-permissions.json")) {
+            for key in list {
+                self.remember(&key);
+            }
+        }
+    }
+
+    fn save_known(&self) {
+        let list: Vec<String> = self.known.iter().cloned().collect();
+        write_json(&self.dir.join("known-permissions.json"), &list);
+    }
+
+    fn ingest_holder_nodes(&mut self) {
+        let keys: Vec<String> = self
+            .users
+            .values()
+            .flat_map(|u| u.nodes.iter().map(|n| n.key.clone()))
+            .chain(self.groups.values().flat_map(|g| g.nodes.iter().map(|n| n.key.clone())))
+            .collect();
+        for key in keys {
+            self.remember(&key);
+        }
+    }
+
+    fn seed_own_nodes(&mut self) {
+        for key in [
+            "*",
+            "vcperms.*",
+            "vcperms.admin",
+            "vcperms.user.info",
+            "vcperms.user.permission.set",
+            "vcperms.user.parent.add",
+            "vcperms.user.meta.set",
+            "vcperms.user.promote",
+            "vcperms.user.demote",
+            "vcperms.group.info",
+            "vcperms.group.permission.set",
+            "vcperms.group.parent.add",
+            "vcperms.group.meta.set",
+            "vcperms.track.info",
+            "vcperms.creategroup",
+            "vcperms.deletegroup",
+            "vcperms.createtrack",
+            "vcperms.deletetrack",
+            "vcperms.verbose",
+            "vcperms.import",
+            "vcperms.export",
+            "vcperms.reload",
+            "vcperms.check",
+            "vcperms.search",
+            "vcPerms:command",
+        ] {
+            self.remember(key);
+        }
+    }
+
+    pub fn remember(&mut self, key: &str) {
+        let key = key.trim();
+        if key.is_empty() || is_structural(key) {
+            return;
+        }
+        if self.known.insert(key.to_string()) {
+            self.dirty = true;
+        }
+        if let Some(star) = wildcard_parent(key) {
+            if self.known.insert(star) {
+                self.dirty = true;
+            }
+        }
+    }
+
+    pub fn remember_many<I>(&mut self, keys: I)
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        for key in keys {
+            self.remember(key.as_ref());
+        }
+    }
+
+    pub fn known_permissions(&self) -> Vec<String> {
+        self.known.iter().cloned().collect()
     }
 
     pub fn mark_dirty(&mut self) {
@@ -359,6 +453,20 @@ impl Store {
         names
     }
 
+    pub fn permission_keys_of_group(&self, name: &str) -> Vec<String> {
+        let Some(g) = self.group(name) else {
+            return self.known_permissions();
+        };
+        merge_keys(perm_keys(&g.nodes), self.known_permissions())
+    }
+
+    pub fn permission_keys_of_user(&self, name: &str) -> Vec<String> {
+        let Some(u) = self.user_by_name(name).or_else(|| self.user(name)) else {
+            return self.known_permissions();
+        };
+        merge_keys(perm_keys(&u.nodes), self.known_permissions())
+    }
+
     pub fn members_of(&self, group: &str) -> Vec<String> {
         let node = format!("group.{}", group.to_ascii_lowercase());
         let mut names: Vec<_> = self
@@ -496,6 +604,54 @@ impl Store {
     fn track_path(&self, name: &str) -> PathBuf {
         self.dir.join("tracks").join(format!("{}.json", name.to_ascii_lowercase()))
     }
+}
+
+fn is_structural(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    k.starts_with("group.")
+        || k.starts_with("prefix.")
+        || k.starts_with("suffix.")
+        || k.starts_with("meta.")
+        || k.starts_with("weight.")
+        || k.starts_with("displayname.")
+}
+
+fn wildcard_parent(key: &str) -> Option<String> {
+    if key == "*" || key.ends_with(".*") || key.ends_with(":*") {
+        return None;
+    }
+    if let Some((head, _)) = key.split_once('.') {
+        if !head.is_empty() {
+            return Some(format!("{head}.*"));
+        }
+    }
+    None
+}
+
+fn merge_keys(mut a: Vec<String>, b: Vec<String>) -> Vec<String> {
+    for key in b {
+        if !a.iter().any(|x| x.eq_ignore_ascii_case(&key)) {
+            a.push(key);
+        }
+    }
+    a.sort();
+    a
+}
+
+fn perm_keys(nodes: &[Node]) -> Vec<String> {
+    let mut keys: Vec<String> = nodes
+        .iter()
+        .filter(|n| {
+            !n.is_group()
+                && n.prefix_parts().is_none()
+                && n.suffix_parts().is_none()
+                && n.meta_parts().is_none()
+        })
+        .map(|n| n.key.clone())
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
 fn load_map<T, F>(dir: &Path, key: F) -> HashMap<String, T>

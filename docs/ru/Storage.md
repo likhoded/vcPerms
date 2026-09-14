@@ -8,12 +8,15 @@
 plugins/data/vcPerms/
   config.yml
   uuidcache.json
+  known-permissions.json
   users/24392406-6f57-3484-97a6-59cc90bc7cbd.json
   groups/admin.json
   tracks/staff.json
   exports/
   verbose/
 ```
+
+`known-permissions.json` — каталог для таба. Плагины пишут туда через IPC `register` и через живые `hasPermission`. См. [API](API).
 
 Пишем в `*.json.tmp` и потом rename, чтобы краш посреди сейва не оставил обрубок.
 

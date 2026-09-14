@@ -1,6 +1,7 @@
 mod group;
 mod misc;
 mod track;
+pub mod tree;
 mod user;
 
 use pumpkin_plugin_api::command::{Arg, CommandError, CommandSender, CommandSuggestion, CommandSuggestions, ConsumedArgs, SuggestionRequest};
@@ -11,7 +12,7 @@ use pumpkin_plugin_api::{Server, player::Player};
 use crate::context::ContextSet;
 use crate::resolve;
 use crate::state::{with_store, with_store_mut};
-use crate::util::{legacy, player_uuid, tokenize};
+use crate::util::{chat, player_uuid, tokenize};
 
 pub struct RootHelp;
 pub struct Dispatch;
@@ -41,30 +42,42 @@ impl CommandSuggestionHandler for Suggest {
         _server: Server,
         request: SuggestionRequest,
     ) -> CommandSuggestions {
+        let trailing = request.remaining.ends_with(' ');
         let tokens = tokenize(&request.remaining);
-        let prefix = if request.remaining.ends_with(' ') {
-            ""
+        let prefix = if trailing {
+            String::new()
         } else {
-            tokens.last().map(String::as_str).unwrap_or("")
+            tokens.last().cloned().unwrap_or_default()
         };
-        let options = suggestions(&tokens, request.remaining.ends_with(' '));
+        let options = suggestions(&tokens, trailing);
         let values = options
             .into_iter()
-            .filter(|v| prefix.is_empty() || v.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()))
+            .filter(|v| {
+                prefix.is_empty() || v.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase())
+            })
             .map(|value| CommandSuggestion {
                 value,
                 tooltip: None,
             })
             .collect();
+        let token_off = if trailing {
+            request.remaining.len()
+        } else {
+            request
+                .remaining
+                .rfind(' ')
+                .map(|i| i + 1)
+                .unwrap_or(0)
+        };
         CommandSuggestions {
-            start: request.start,
-            length: request.remaining.len() as u32,
+            start: request.start + token_off as u32,
+            length: prefix.len() as u32,
             values,
         }
     }
 }
 
-fn run(sender: &CommandSender, server: &Server, line: &str) -> Result<i32, CommandError> {
+pub(crate) fn run(sender: &CommandSender, server: &Server, line: &str) -> Result<i32, CommandError> {
     let args = tokenize(line);
     if args.is_empty() {
         help(sender);
@@ -72,7 +85,7 @@ fn run(sender: &CommandSender, server: &Server, line: &str) -> Result<i32, Comma
     }
     let head = args[0].to_ascii_lowercase();
     if !can_run(sender, server, &head, &args) {
-        sender.send_message(legacy("&cYou don't have permission to do that."));
+        sender.send_message(chat("&cYou don't have permission to do that."));
         return Ok(0);
     }
     match head.as_str() {
@@ -99,25 +112,139 @@ fn run(sender: &CommandSender, server: &Server, line: &str) -> Result<i32, Comma
         "group" => group::handle(sender, server, &args[1..])?,
         "track" => track::handle(sender, &args[1..])?,
         other => {
-            sender.send_message(legacy(&format!("&cUnknown subcommand '{other}'. Try /vcp help")));
+            sender.send_message(chat(&format!("&cUnknown subcommand '{other}'. Try /vcp help")));
         }
     }
     Ok(1)
 }
 
 fn help(sender: &CommandSender) {
-    sender.send_message(legacy(
-        "&3&lvcPerms &7— permission manager\n\
-         &7/vcp user <user> ...\n\
-         &7/vcp group <group> ...\n\
-         &7/vcp track <track> ...\n\
+    sender.send_message(chat(
+        "&7Permission manager\n\
+         &7/vcp user <user> permission set <node> [true|false]\n\
+         &7/vcp group <group> permission set <node> [true|false]\n\
+         &7/vcp user <user> parent add <group>\n\
+         &7/vcp group <group> parent add <group>\n\
+         &7/vcp user <user> meta addprefix <prio> <text>\n\
+         &7/vcp track <track> append <group>\n\
          &7/vcp creategroup | deletegroup | listgroups\n\
-         &7/vcp createtrack | deletetrack | listtracks | listusers\n\
          &7/vcp check <user> <node>  &8/  &7search <query>\n\
-         &7/vcp verbose on|off|record|paste\n\
-         &7/vcp tree [user|group] <name>\n\
-         &7/vcp import|export|applyedits|editor|reload|info",
+         &7/vcp verbose on|off|record|paste  &8/  &7reload|info",
     ));
+}
+
+pub fn usage_holder(sender: &CommandSender, kind: &str, name: &str) {
+    if kind == "user" {
+        msg(
+            sender,
+            &format!(
+                "&fUser &e{name}\n\
+                 &7/vcp user {name} info\n\
+                 &7/vcp user {name} permission set|unset|settemp|unsettemp|check|clear|info\n\
+                 &7/vcp user {name} parent add|remove|set|addtemp|removetemp|clear|...\n\
+                 &7/vcp user {name} meta set|unset|addprefix|addsuffix|...\n\
+                 &7/vcp user {name} promote|demote <track>  clone <user>  clear  editor"
+            ),
+        );
+    } else {
+        msg(
+            sender,
+            &format!(
+                "&fGroup &e{name}\n\
+                 &7/vcp group {name} info\n\
+                 &7/vcp group {name} permission set|unset|settemp|unsettemp|clear|info\n\
+                 &7/vcp group {name} parent add|remove|set|addtemp|removetemp|clear\n\
+                 &7/vcp group {name} meta set|unset|addprefix|addsuffix|...\n\
+                 &7/vcp group {name} listmembers|setweight|setdisplayname|rename|clone|clear|editor"
+            ),
+        );
+    }
+}
+
+pub fn usage_permission(sender: &CommandSender, kind: &str, name: &str) {
+    let check = if kind == "user" {
+        format!("&7/vcp {kind} {name} permission check <node> [ctx...]\n")
+    } else {
+        String::new()
+    };
+    msg(
+        sender,
+        &format!(
+            "&f{kind} &e{name} &7permission\n\
+             &7/vcp {kind} {name} permission info [page]\n\
+             &7/vcp {kind} {name} permission set <node> [true|false] [ctx...]\n\
+             &7/vcp {kind} {name} permission unset <node> [ctx...]\n\
+             &7/vcp {kind} {name} permission settemp <node> <duration> [true|false] [ctx...]\n\
+             &7/vcp {kind} {name} permission unsettemp <node> [ctx...]\n\
+             {check}&7/vcp {kind} {name} permission clear [ctx...]"
+        ),
+    );
+}
+
+pub fn usage_parent(sender: &CommandSender, kind: &str, name: &str) {
+    let extra = if kind == "user" {
+        format!(
+            "&7/vcp {kind} {name} parent cleartrack <track>\n\
+             &7/vcp {kind} {name} parent switchprimarygroup <group>\n\
+             &7/vcp {kind} {name} parent settrack <track> <group>\n"
+        )
+    } else {
+        String::new()
+    };
+    msg(
+        sender,
+        &format!(
+            "&f{kind} &e{name} &7parent\n\
+             &7/vcp {kind} {name} parent info\n\
+             &7/vcp {kind} {name} parent add <group> [ctx...]\n\
+             &7/vcp {kind} {name} parent remove <group> [ctx...]\n\
+             &7/vcp {kind} {name} parent set <group>\n\
+             &7/vcp {kind} {name} parent addtemp <group> <duration> [ctx...]\n\
+             &7/vcp {kind} {name} parent removetemp <group> [ctx...]\n\
+             &7/vcp {kind} {name} parent clear [ctx...]\n\
+             {extra}"
+        ),
+    );
+}
+
+pub fn usage_meta(sender: &CommandSender, kind: &str, name: &str) {
+    msg(
+        sender,
+        &format!(
+            "&f{kind} &e{name} &7meta\n\
+             &7/vcp {kind} {name} meta info\n\
+             &7/vcp {kind} {name} meta set <key> <value> [ctx...]\n\
+             &7/vcp {kind} {name} meta unset <key>\n\
+             &7/vcp {kind} {name} meta settemp <key> <value> <duration> [ctx...]\n\
+             &7/vcp {kind} {name} meta addprefix <priority> <text>\n\
+             &7/vcp {kind} {name} meta addsuffix <priority> <text>\n\
+             &7/vcp {kind} {name} meta removeprefix|removesuffix <priority>"
+        ),
+    );
+}
+
+pub fn usage_group_root(sender: &CommandSender) {
+    msg(
+        sender,
+        "&fGroup\n\
+         &7/vcp group <group> info\n\
+         &7/vcp group <group> permission set <node> [true|false]\n\
+         &7/vcp group <group> parent add <group>\n\
+         &7/vcp group <group> meta addprefix <priority> <text>\n\
+         &7/vcp group <group> listmembers|setweight|setdisplayname|rename|clone",
+    );
+}
+
+pub fn usage_user_root(sender: &CommandSender) {
+    msg(
+        sender,
+        "&fUser\n\
+         &7/vcp user <user> info\n\
+         &7/vcp user <user> permission set <node> [true|false]\n\
+         &7/vcp user <user> parent add <group>\n\
+         &7/vcp user <user> meta addprefix <priority> <text>\n\
+         &7/vcp user <user> promote|demote <track>",
+    );
 }
 
 fn can_run(sender: &CommandSender, server: &Server, head: &str, args: &[String]) -> bool {
@@ -164,9 +291,9 @@ fn can_run(sender: &CommandSender, server: &Server, head: &str, args: &[String])
 }
 
 fn command_node(head: &str, args: &[String]) -> String {
-    let rest = args.get(1).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    let action = args.get(2).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
     match head {
-        "user" => match rest.as_str() {
+        "user" => match action.as_str() {
             "permission" => "vcperms.user.permission.set".into(),
             "parent" => "vcperms.user.parent.add".into(),
             "meta" => "vcperms.user.meta.set".into(),
@@ -175,7 +302,7 @@ fn command_node(head: &str, args: &[String]) -> String {
             "info" => "vcperms.user.info".into(),
             _ => "vcperms.user.info".into(),
         },
-        "group" => match rest.as_str() {
+        "group" => match action.as_str() {
             "permission" => "vcperms.group.permission.set".into(),
             "parent" => "vcperms.group.parent.add".into(),
             "meta" => "vcperms.group.meta.set".into(),
@@ -194,13 +321,13 @@ fn command_node(head: &str, args: &[String]) -> String {
 }
 
 pub fn msg(sender: &CommandSender, text: &str) {
-    sender.send_message(legacy(text));
+    sender.send_message(chat(text));
 }
 
 pub fn need<'a>(args: &'a [String], idx: usize, what: &str) -> Result<&'a str, CommandError> {
     args.get(idx)
         .map(String::as_str)
-        .ok_or_else(|| CommandError::CommandFailed(legacy(&format!("&cMissing {what}"))))
+        .ok_or_else(|| CommandError::CommandFailed(chat(&format!("&cMissing {what}"))))
 }
 
 pub fn page_of<T>(items: &[T], page: usize, per: usize) -> (usize, usize, &[T]) {
@@ -258,24 +385,89 @@ fn suggestions(tokens: &[String], complete: bool) -> Vec<String> {
             "info", "add", "remove", "set", "addtemp", "removetemp", "clear", "cleartrack",
             "switchprimarygroup", "settrack",
         ]),
-        "user" if n == 3 && tok(tokens, 2) == "meta" => vec_s(&[
-            "info", "set", "unset", "settemp", "unsettemp", "addprefix", "removeprefix",
-            "addsuffix", "removesuffix", "addtempprefix", "addtempsuffix",
-        ]),
-        "user" if n == 3 && matches!(tok(tokens, 2).as_str(), "promote" | "demote" | "parent") => {
+        "user" if n == 3 && tok(tokens, 2) == "meta" => meta_actions(),
+        "user" if n == 3 && matches!(tok(tokens, 2).as_str(), "promote" | "demote") => {
             with_store(|s| s.track_names())
+        }
+        "user" if n == 3 && tok(tokens, 2) == "clone" => with_store(|s| s.user_names()),
+        "user" if n == 4 && tok(tokens, 2) == "permission" && matches!(tok(tokens, 3).as_str(), "set" | "unset" | "settemp" | "unsettemp" | "check") => {
+            holder_nodes("user", tokens.get(1).map(String::as_str).unwrap_or(""))
+        }
+        "user" if n == 5 && tok(tokens, 2) == "permission" && tok(tokens, 3) == "set" => {
+            vec_s(&["true", "false"])
+        }
+        "user" if n == 5 && tok(tokens, 2) == "permission" && tok(tokens, 3) == "settemp" => {
+            vec_s(&["30s", "15m", "1h", "1d", "7d", "30d"])
+        }
+        "user" if n == 6 && tok(tokens, 2) == "permission" && tok(tokens, 3) == "settemp" => {
+            vec_s(&["true", "false"])
+        }
+        "user" if n == 4 && tok(tokens, 2) == "parent" && matches!(tok(tokens, 3).as_str(), "add" | "remove" | "set" | "addtemp" | "removetemp" | "switchprimarygroup") => {
+            with_store(|s| s.group_names())
+        }
+        "user" if n == 4 && tok(tokens, 2) == "parent" && matches!(tok(tokens, 3).as_str(), "cleartrack" | "settrack") => {
+            with_store(|s| s.track_names())
+        }
+        "user" if n == 5 && tok(tokens, 2) == "parent" && tok(tokens, 3) == "addtemp" => {
+            vec_s(&["30s", "15m", "1h", "1d", "7d", "30d"])
+        }
+        "user" if n == 5 && tok(tokens, 2) == "parent" && tok(tokens, 3) == "settrack" => {
+            with_store(|s| s.group_names())
         }
         "group" if n == 1 => with_store(|s| s.group_names()),
         "group" if n == 2 => vec_s(&[
             "info", "permission", "parent", "meta", "editor", "listmembers", "setweight",
             "setdisplayname", "showtracks", "clear", "rename", "clone",
         ]),
+        "group" if n == 3 && tok(tokens, 2) == "permission" => {
+            vec_s(&["info", "set", "unset", "settemp", "unsettemp", "clear"])
+        }
+        "group" if n == 3 && tok(tokens, 2) == "parent" => vec_s(&[
+            "info", "add", "remove", "set", "addtemp", "removetemp", "clear",
+        ]),
+        "group" if n == 3 && tok(tokens, 2) == "meta" => meta_actions(),
+        "group" if n == 3 && matches!(tok(tokens, 2).as_str(), "rename" | "clone") => with_store(|s| s.group_names()),
+        "group" if n == 4 && tok(tokens, 2) == "permission" && matches!(tok(tokens, 3).as_str(), "set" | "unset" | "settemp" | "unsettemp") => {
+            holder_nodes("group", tokens.get(1).map(String::as_str).unwrap_or(""))
+        }
+        "group" if n == 5 && tok(tokens, 2) == "permission" && tok(tokens, 3) == "set" => {
+            vec_s(&["true", "false"])
+        }
+        "group" if n == 5 && tok(tokens, 2) == "permission" && tok(tokens, 3) == "settemp" => {
+            vec_s(&["30s", "15m", "1h", "1d", "7d", "30d"])
+        }
+        "group" if n == 6 && tok(tokens, 2) == "permission" && tok(tokens, 3) == "settemp" => {
+            vec_s(&["true", "false"])
+        }
+        "group" if n == 4 && tok(tokens, 2) == "parent" && matches!(tok(tokens, 3).as_str(), "add" | "remove" | "set" | "addtemp" | "removetemp") => {
+            with_store(|s| s.group_names())
+        }
+        "group" if n == 5 && tok(tokens, 2) == "parent" && tok(tokens, 3) == "addtemp" => {
+            vec_s(&["30s", "15m", "1h", "1d", "7d", "30d"])
+        }
         "track" if n == 1 => with_store(|s| s.track_names()),
         "track" if n == 2 => vec_s(&["info", "append", "insert", "remove", "clear", "rename", "clone", "editor"]),
+        "track" if n == 3 && matches!(tok(tokens, 2).as_str(), "append" | "insert" | "remove") => {
+            with_store(|s| s.group_names())
+        }
         "verbose" if n == 1 => vec_s(&["on", "off", "record", "paste"]),
         "tree" if n == 1 => vec_s(&["user", "group"]),
+        "tree" if n == 2 && tok(tokens, 1) == "user" => with_store(|s| s.user_names()),
+        "tree" if n == 2 && tok(tokens, 1) == "group" => with_store(|s| s.group_names()),
+        "check" if n == 1 => with_store(|s| s.user_names()),
         _ => Vec::new(),
     }
+}
+
+fn meta_actions() -> Vec<String> {
+    vec_s(&[
+        "info", "set", "unset", "settemp", "unsettemp", "addprefix", "removeprefix",
+        "addsuffix", "removesuffix", "addtempprefix", "addtempsuffix",
+    ])
+}
+
+fn holder_nodes(_kind: &str, _name: &str) -> Vec<String> {
+    with_store(|s| s.known_permissions())
 }
 
 fn tok(tokens: &[String], i: usize) -> String {
@@ -290,10 +482,10 @@ pub fn write_export(name: &str, value: &serde_json::Value) -> Result<String, Com
     with_store(|store| {
         let path = store.data_dir().join("exports").join(name);
         let raw = serde_json::to_string_pretty(value).map_err(|e| {
-            CommandError::CommandFailed(legacy(&format!("&cjson: {e}")))
+            CommandError::CommandFailed(chat(&format!("&cjson: {e}")))
         })?;
         std::fs::write(&path, raw).map_err(|e| {
-            CommandError::CommandFailed(legacy(&format!("&cwrite failed: {e}")))
+            CommandError::CommandFailed(chat(&format!("&cwrite failed: {e}")))
         })?;
         Ok(path.display().to_string())
     })
@@ -309,7 +501,7 @@ pub fn read_data_file(name: &str) -> Result<String, CommandError> {
         let alt = store.data_dir().join("exports").join(name);
         let raw = std::fs::read_to_string(&path)
             .or_else(|_| std::fs::read_to_string(&alt))
-            .map_err(|_| CommandError::CommandFailed(legacy(&format!("&cfile not found: {name}"))))?;
+            .map_err(|_| CommandError::CommandFailed(chat(&format!("&cfile not found: {name}"))))?;
         Ok(raw)
     })
 }

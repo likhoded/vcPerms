@@ -8,12 +8,15 @@ Flat files. One json per user / group / track.
 plugins/data/vcPerms/
   config.yml
   uuidcache.json
+  known-permissions.json
   users/24392406-6f57-3484-97a6-59cc90bc7cbd.json
   groups/admin.json
   tracks/staff.json
   exports/
   verbose/
 ```
+
+`known-permissions.json` is the tab-complete catalog. Plugins fill it via IPC `register` and via live `hasPermission` checks. See [API](API).
 
 Writes go to `*.json.tmp` and then rename, so a crash mid-save shouldn't leave a half file.
 

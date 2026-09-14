@@ -3,8 +3,31 @@ use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::text::TextComponent;
 use pumpkin_plugin_api::uuid::Uuid;
 
+const TAG: &str = "vcPerms";
+const TAG_COLOR: &str = "&e";
+
 pub fn legacy(s: &str) -> TextComponent {
     TextComponent::from_legacy_string_with_code(s, '&')
+}
+
+/// Player-facing chat: yellow `[vcPerms]` on every line, then the legacy body.
+pub fn chat(text: &str) -> TextComponent {
+    prefixed(text, TAG, TAG_COLOR)
+}
+
+pub fn prefixed(text: &str, tag: &str, color: &str) -> TextComponent {
+    let tagged = text
+        .split('\n')
+        .map(|line| {
+            if line.is_empty() {
+                format!("{color}[{tag}]&r")
+            } else {
+                format!("{color}[{tag}]&r {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    legacy(&tagged)
 }
 
 pub fn player_uuid(player: &Player) -> String {

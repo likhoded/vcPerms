@@ -1,7 +1,7 @@
 use pumpkin_plugin_api::command::{CommandError, CommandSender};
 use pumpkin_plugin_api::Server;
 
-use crate::cmd::{msg, need, page_of, parse_page, save};
+use crate::cmd::{msg, need, page_of, parse_page, save, usage_group_root, usage_holder, usage_meta, usage_parent, usage_permission};
 use crate::config::TempAdd;
 use crate::context::ContextSet;
 use crate::holder::Holder;
@@ -10,6 +10,10 @@ use crate::state::{with_store, with_store_mut};
 use crate::util::{fmt_remaining, now_secs, parse_bool, parse_duration};
 
 pub fn handle(sender: &CommandSender, _server: &Server, args: &[String]) -> Result<(), CommandError> {
+    if args.is_empty() {
+        usage_group_root(sender);
+        return Ok(());
+    }
     let name = need(args, 0, "group")?;
     if args.len() == 1 {
         return info(sender, name);
@@ -41,6 +45,7 @@ pub fn handle(sender: &CommandSender, _server: &Server, args: &[String]) -> Resu
         }
         other => {
             msg(sender, &format!("&cUnknown group subcommand '{other}'"));
+            usage_holder(sender, "group", name);
             Ok(())
         }
     }
@@ -100,7 +105,11 @@ fn info(sender: &CommandSender, name: &str) -> Result<(), CommandError> {
 }
 
 fn permission(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), CommandError> {
-    if args.is_empty() || args[0].eq_ignore_ascii_case("info") {
+    if args.is_empty() {
+        usage_permission(sender, "group", name);
+        return Ok(());
+    }
+    if args[0].eq_ignore_ascii_case("info") {
         return perm_info(sender, name, parse_page(args, 1));
     }
     match args[0].to_ascii_lowercase().as_str() {
@@ -144,6 +153,7 @@ fn permission(sender: &CommandSender, name: &str, args: &[String]) -> Result<(),
         }
         other => {
             msg(sender, &format!("&cUnknown permission action '{other}'"));
+            usage_permission(sender, "group", name);
             Ok(())
         }
     }
@@ -176,7 +186,11 @@ fn perm_info(sender: &CommandSender, name: &str, page: usize) -> Result<(), Comm
 }
 
 fn parent(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), CommandError> {
-    if args.is_empty() || args[0].eq_ignore_ascii_case("info") {
+    if args.is_empty() {
+        usage_parent(sender, "group", name);
+        return Ok(());
+    }
+    if args[0].eq_ignore_ascii_case("info") {
         let text = with_store(|store| {
             store
                 .group(name)
@@ -258,13 +272,18 @@ fn parent(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Com
         }
         other => {
             msg(sender, &format!("&cUnknown parent action '{other}'"));
+            usage_parent(sender, "group", name);
             Ok(())
         }
     }
 }
 
 fn meta(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), CommandError> {
-    if args.is_empty() || args[0].eq_ignore_ascii_case("info") {
+    if args.is_empty() {
+        usage_meta(sender, "group", name);
+        return Ok(());
+    }
+    if args[0].eq_ignore_ascii_case("info") {
         let now = now_secs();
         let lines = with_store(|store| {
             store.group(name).map(|g| {
@@ -334,6 +353,7 @@ fn meta(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Comma
         }
         other => {
             msg(sender, &format!("&cUnknown meta action '{other}'"));
+            usage_meta(sender, "group", name);
             Ok(())
         }
     }
@@ -485,6 +505,7 @@ fn set_node(
             }
         }
         g.add_node(node);
+        store.remember(key);
         store.mark_dirty();
         Ok(())
     })?;
@@ -554,5 +575,5 @@ fn skip_mod(args: &[String]) -> &[String] {
 }
 
 fn fail(e: impl ToString) -> CommandError {
-    CommandError::CommandFailed(crate::util::legacy(&format!("&c{}", e.to_string())))
+    CommandError::CommandFailed(crate::util::chat(&format!("&c{}", e.to_string())))
 }

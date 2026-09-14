@@ -147,5 +147,5 @@ fn info(sender: &CommandSender, name: &str) -> Result<(), CommandError> {
 }
 
 fn fail(e: impl ToString) -> CommandError {
-    CommandError::CommandFailed(crate::util::legacy(&format!("&c{}", e.to_string())))
+    CommandError::CommandFailed(crate::util::chat(&format!("&c{}", e.to_string())))
 }

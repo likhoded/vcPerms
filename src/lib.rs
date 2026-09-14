@@ -11,7 +11,7 @@ mod util;
 mod verbose;
 
 use pumpkin_plugin_api::{
-    command::{ArgumentType, Command, CommandNode, StringType},
+    command::Command,
     events::{
         EventData, EventHandler, EventPriority, PlayerChatEvent, PlayerJoinEvent,
         PlayerPermissionCheckEvent,
@@ -22,7 +22,7 @@ use pumpkin_plugin_api::{
 };
 use tracing::info;
 
-use crate::cmd::{Dispatch, RootHelp, Suggest};
+use crate::cmd::RootHelp;
 use crate::context::ContextSet;
 use crate::holder::Holder;
 use crate::state::{init, with_store, with_store_mut, with_verbose};
@@ -60,6 +60,7 @@ impl EventHandler<PlayerPermissionCheckEvent> for CheckHandler {
         let name = event.player.get_name();
         let uuid = player_uuid(&event.player);
         let perm = event.permission.clone();
+        with_store_mut(|store| store.remember(&perm));
         let host_result = event.permission_result;
         let (allowed, source, node, ops_override, allow_ops, is_op) = with_store(|store| {
             let ctx = ContextSet::for_player(&event.player, &store.config);
@@ -187,17 +188,12 @@ impl Plugin for VcPerms {
             children: Vec::new(),
         })?;
 
-        let mut root = Command::new(
+        let root = Command::new(
             &["vcp".to_string(), "vcperms".to_string()],
             "vcPerms — manage permissions",
         )
         .execute(RootHelp);
-
-        let args = CommandNode::argument("args", &ArgumentType::String(StringType::Greedy))
-            .suggest(Suggest)
-            .execute(Dispatch);
-        root = root.then(args);
-        context.register_command(root, PERM_CMD);
+        context.register_command(cmd::tree::attach(root), PERM_CMD);
 
         context.schedule_repeating_task(20, 20 * 60, |_server| {
             let n = with_store_mut(|s| {
@@ -228,6 +224,28 @@ impl Plugin for VcPerms {
             serde_json::from_str(&raw).map_err(|e| format!("bad ipc json: {e}"))?;
         let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("");
         let user = req.get("user").and_then(|v| v.as_str()).unwrap_or("");
+        if matches!(op, "register" | "announce" | "announce-permissions") {
+            let mut keys = Vec::new();
+            if let Some(list) = req.get("permissions").or_else(|| req.get("nodes")).and_then(|v| v.as_array()) {
+                for item in list {
+                    if let Some(s) = item.as_str() {
+                        keys.push(s.to_string());
+                    }
+                }
+            }
+            if let Some(s) = req.get("permission").and_then(|v| v.as_str()) {
+                keys.push(s.to_string());
+            }
+            let n = with_store_mut(|store| {
+                let before = store.known_permissions().len();
+                store.remember_many(&keys);
+                store.save_if_dirty();
+                store.known_permissions().len().saturating_sub(before)
+            });
+            return Ok(serde_json::to_vec(&serde_json::json!({"ok": true, "added": n}))
+                .unwrap_or_else(|_| b"{}".to_vec()));
+        }
+
         let reply = with_store(|store| match op {
             "check" => {
                 let perm = req.get("permission").and_then(|v| v.as_str()).unwrap_or("");

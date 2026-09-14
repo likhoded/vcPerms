@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.5
+
+- yellow `[vcPerms]` prefix on every player-facing chat line
+- IPC `register` / `announce` for plugin permission catalogs
+- known-permissions.json + tab-complete from the live catalog
+- Brigadier tree for `/vcp user|group|track`
+- documented plugin API (wiki / docs)
+
 ## 0.8.4
 
 - atomic json writes (`*.tmp` + rename)

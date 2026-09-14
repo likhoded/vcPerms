@@ -10,7 +10,7 @@ use crate::util::now_secs;
 pub fn info(sender: &CommandSender) {
     let text = with_store(|s| {
         format!(
-            "&3vcPerms &f{} \n&7server: &f{} \n&7users: &f{} \n&7groups: &f{} \n&7tracks: &f{} \n&7storage: &fflatfile/json",
+            "&f{}\n&7server &f{}\n&7users &f{}\n&7groups &f{}\n&7tracks &f{}\n&7storage &fflatfile/json",
             env!("CARGO_PKG_VERSION"),
             s.config.server,
             s.users().count(),
@@ -181,5 +181,5 @@ pub fn applyedits(sender: &CommandSender, args: &[String]) -> Result<(), Command
 }
 
 fn fail(e: impl ToString) -> CommandError {
-    CommandError::CommandFailed(crate::util::legacy(&format!("&c{}", e.to_string())))
+    CommandError::CommandFailed(crate::util::chat(&format!("&c{}", e.to_string())))
 }

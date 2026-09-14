@@ -1,6 +1,6 @@
 [package]
 name = "vcperms"
-version = "0.8.4"
+version = "0.8.5"
 edition = "2024"
 description = "Groups, tracks and permission nodes for Pumpkin."
 license = "MIT"

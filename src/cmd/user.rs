@@ -1,7 +1,7 @@
 use pumpkin_plugin_api::command::{CommandError, CommandSender};
 use pumpkin_plugin_api::Server;
 
-use crate::cmd::{default_ctx, msg, need, page_of, parse_page, save};
+use crate::cmd::{default_ctx, msg, need, page_of, parse_page, save, usage_holder, usage_meta, usage_parent, usage_permission, usage_user_root};
 use crate::config::TempAdd;
 use crate::context::ContextSet;
 use crate::holder::Holder;
@@ -11,6 +11,10 @@ use crate::state::{with_store, with_store_mut};
 use crate::util::{fmt_remaining, now_secs, parse_bool, parse_duration};
 
 pub fn handle(sender: &CommandSender, server: &Server, args: &[String]) -> Result<(), CommandError> {
+    if args.is_empty() {
+        usage_user_root(sender);
+        return Ok(());
+    }
     let name = need(args, 0, "user")?;
     if args.len() == 1 {
         return info(sender, server, name);
@@ -28,6 +32,7 @@ pub fn handle(sender: &CommandSender, server: &Server, args: &[String]) -> Resul
         "clone" => clone(sender, name, &args[2..]),
         other => {
             msg(sender, &format!("&cUnknown user subcommand '{other}'"));
+            usage_holder(sender, "user", name);
             Ok(())
         }
     }
@@ -72,7 +77,11 @@ fn info(sender: &CommandSender, server: &Server, name: &str) -> Result<(), Comma
 }
 
 fn permission(sender: &CommandSender, server: &Server, name: &str, args: &[String]) -> Result<(), CommandError> {
-    if args.is_empty() || args[0].eq_ignore_ascii_case("info") {
+    if args.is_empty() {
+        usage_permission(sender, "user", name);
+        return Ok(());
+    }
+    if args[0].eq_ignore_ascii_case("info") {
         return perm_info(sender, name, parse_page(args, 1));
     }
     match args[0].to_ascii_lowercase().as_str() {
@@ -142,6 +151,7 @@ fn permission(sender: &CommandSender, server: &Server, name: &str, args: &[Strin
         }
         other => {
             msg(sender, &format!("&cUnknown permission action '{other}'"));
+            usage_permission(sender, "user", name);
             Ok(())
         }
     }
@@ -172,7 +182,11 @@ fn perm_info(sender: &CommandSender, name: &str, page: usize) -> Result<(), Comm
 }
 
 fn parent(sender: &CommandSender, _server: &Server, name: &str, args: &[String]) -> Result<(), CommandError> {
-    if args.is_empty() || args[0].eq_ignore_ascii_case("info") {
+    if args.is_empty() {
+        usage_parent(sender, "user", name);
+        return Ok(());
+    }
+    if args[0].eq_ignore_ascii_case("info") {
         let text = with_store_mut(|store| {
             let id = store.ensure_user(name, None);
             let user = store.user(&id).unwrap();
@@ -292,13 +306,18 @@ fn parent(sender: &CommandSender, _server: &Server, name: &str, args: &[String])
         }
         other => {
             msg(sender, &format!("&cUnknown parent action '{other}'"));
+            usage_parent(sender, "user", name);
             Ok(())
         }
     }
 }
 
 fn meta(sender: &CommandSender, _server: &Server, name: &str, args: &[String]) -> Result<(), CommandError> {
-    if args.is_empty() || args[0].eq_ignore_ascii_case("info") {
+    if args.is_empty() {
+        usage_meta(sender, "user", name);
+        return Ok(());
+    }
+    if args[0].eq_ignore_ascii_case("info") {
         return meta_info(sender, name);
     }
     match args[0].to_ascii_lowercase().as_str() {
@@ -345,6 +364,7 @@ fn meta(sender: &CommandSender, _server: &Server, name: &str, args: &[String]) -
         }
         other => {
             msg(sender, &format!("&cUnknown meta action '{other}'"));
+            usage_meta(sender, "user", name);
             Ok(())
         }
     }
@@ -542,6 +562,7 @@ fn set_node(
             }
         }
         user.add_node(node);
+        store.remember(key);
         store.mark_dirty();
         Ok(())
     })?;
@@ -642,5 +663,5 @@ fn skip_mod(args: &[String]) -> &[String] {
 }
 
 fn fail(e: impl ToString) -> CommandError {
-    CommandError::CommandFailed(crate::util::legacy(&format!("&c{}", e.to_string())))
+    CommandError::CommandFailed(crate::util::chat(&format!("&c{}", e.to_string())))
 }

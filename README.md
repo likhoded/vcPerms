@@ -44,6 +44,7 @@ JSON, one file per holder:
 plugins/data/vcPerms/
   config.yml
   uuidcache.json
+  known-permissions.json
   users/<uuid>.json
   groups/<name>.json
   tracks/<name>.json
