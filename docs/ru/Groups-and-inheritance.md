@@ -11,7 +11,7 @@
 /vcp user Alex parent add member
 ```
 
-`parent add` добавляет. `parent set` сначала сносит все остальные `group.*`.
+`parent add` добавляет. `parent set` сначала сносит все остальные `group.*`. Нода `group.X` с `value: false` эту группу не наследует.
 
 Вес нужен только когда две унаследованные ноды спорят:
 

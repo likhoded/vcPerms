@@ -63,7 +63,9 @@ impl Node {
     }
 
     pub fn same_identity(&self, other: &Node) -> bool {
-        self.key.eq_ignore_ascii_case(&other.key) && self.ctx() == other.ctx()
+        self.key.eq_ignore_ascii_case(&other.key)
+            && self.ctx() == other.ctx()
+            && self.expiry.is_some() == other.expiry.is_some()
     }
 
     pub fn is_group(&self) -> bool {
@@ -129,9 +131,38 @@ pub fn specificity(node_key: &str, query: &str) -> Option<i32> {
         return Some(1000 + node.len() as i32);
     }
     if let Some(prefix) = node.strip_suffix(".*") {
-        if q == prefix || q.starts_with(&format!("{prefix}.")) {
+        if q == prefix || q.starts_with(&format!("{prefix}.")) || q.starts_with(&format!("{prefix}:"))
+        {
+            return Some(100 + prefix.len() as i32);
+        }
+    }
+    if let Some(prefix) = node.strip_suffix(":*") {
+        if q == prefix || q.starts_with(&format!("{prefix}:")) {
             return Some(100 + prefix.len() as i32);
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wildcard_covers_colon_host_nodes() {
+        assert_eq!(specificity("vcedit.*", "vcedit:command").unwrap() > 1, true);
+        assert!(specificity("vcperms:*", "vcperms:command").is_some());
+        assert!(specificity("vcedit.*", "vcedit.wand").is_some());
+        assert!(specificity("foo.*", "bar.baz").is_none());
+        assert!(specificity("build", "build").is_some());
+        assert!(specificity("*", "anything").is_some());
+    }
+
+    #[test]
+    fn temp_and_permanent_are_distinct() {
+        let a = Node::perm("x.y", true, &crate::context::ContextSet::empty(), None);
+        let b = Node::perm("x.y", true, &crate::context::ContextSet::empty(), Some(9));
+        assert!(!a.same_identity(&b));
+        assert!(a.same_identity(&Node::perm("x.y", false, &crate::context::ContextSet::empty(), None)));
+    }
 }

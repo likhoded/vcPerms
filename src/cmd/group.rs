@@ -1,7 +1,7 @@
 use pumpkin_plugin_api::command::{CommandError, CommandSender};
 use pumpkin_plugin_api::Server;
 
-use crate::cmd::{msg, need, page_of, parse_page, save, usage_group_root, usage_holder, usage_meta, usage_parent, usage_permission};
+use crate::cmd::{msg, need, page_of, parse_page, parse_temp_mod, save, split_text_and_ctx, usage_group_root, usage_holder, usage_meta, usage_parent, usage_permission};
 use crate::config::TempAdd;
 use crate::context::ContextSet;
 use crate::holder::Holder;
@@ -117,7 +117,7 @@ fn permission(sender: &CommandSender, name: &str, args: &[String]) -> Result<(),
             let node = need(args, 1, "node")?;
             let (value, rest) = split_bool(&args[2..]);
             let ctx = ContextSet::parse_trailing(rest).map_err(fail)?;
-            set_node(sender, name, node, value, None, ctx)
+            set_node(sender, name, node, value, None, ctx, None)
         }
         "unset" => {
             let node = need(args, 1, "node")?;
@@ -127,9 +127,10 @@ fn permission(sender: &CommandSender, name: &str, args: &[String]) -> Result<(),
         "settemp" => {
             let node = need(args, 1, "node")?;
             let dur = parse_duration(need(args, 2, "duration")?).map_err(fail)?;
-            let (value, rest) = split_bool(&skip_mod(&args[3..]));
+            let (temp_mod, rest) = parse_temp_mod(&args[3..]);
+            let (value, rest) = split_bool(rest);
             let ctx = ContextSet::parse_trailing(rest).map_err(fail)?;
-            set_node(sender, name, node, value, Some(now_secs() + dur), ctx)
+            set_node(sender, name, node, value, Some(now_secs() + dur), ctx, temp_mod)
         }
         "unsettemp" => {
             let node = need(args, 1, "node")?;
@@ -213,7 +214,7 @@ fn parent(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Com
                 }
                 let g = store.group_mut(name).ok_or_else(|| fail(format!("group '{name}' does not exist")))?;
                 g.add_node(Node::group(parent, &ctx, None));
-                store.mark_dirty();
+                store.touch_group(name);
                 Ok(())
             })?;
             save();
@@ -234,7 +235,7 @@ fn parent(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Com
                 let g = store.group_mut(name).ok_or_else(|| fail(format!("group '{name}' does not exist")))?;
                 g.nodes.retain(|n| !n.is_group());
                 g.add_node(Node::group(parent, &ContextSet::empty(), None));
-                store.mark_dirty();
+                store.touch_group(name);
                 Ok(())
             })?;
             save();
@@ -251,7 +252,7 @@ fn parent(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Com
                 }
                 let g = store.group_mut(name).ok_or_else(|| fail(format!("group '{name}' does not exist")))?;
                 g.add_node(Node::group(parent, &ctx, Some(now_secs() + dur)));
-                store.mark_dirty();
+                store.touch_group(name);
                 Ok(())
             })?;
             save();
@@ -309,7 +310,7 @@ fn meta(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Comma
             let key = need(args, 1, "key")?;
             let value = need(args, 2, "value")?;
             let ctx = ContextSet::parse_trailing(&args[3..]).map_err(fail)?;
-            set_node(sender, name, &format!("meta.{key}.{value}"), true, None, ctx)
+            set_node(sender, name, &format!("meta.{key}.{value}"), true, None, ctx, None)
         }
         "unset" => {
             let key = need(args, 1, "key")?;
@@ -325,7 +326,7 @@ fn meta(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Comma
             let value = need(args, 2, "value")?;
             let dur = parse_duration(need(args, 3, "duration")?).map_err(fail)?;
             let ctx = ContextSet::parse_trailing(&args[4..]).map_err(fail)?;
-            set_node(sender, name, &format!("meta.{key}.{value}"), true, Some(now_secs() + dur), ctx)
+            set_node(sender, name, &format!("meta.{key}.{value}"), true, Some(now_secs() + dur), ctx, None)
         }
         "addprefix" => weighted(sender, name, true, &args[1..], None),
         "addsuffix" => weighted(sender, name, false, &args[1..], None),
@@ -333,23 +334,19 @@ fn meta(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Comma
         "removesuffix" => remove_weighted(sender, name, false, &args[1..]),
         "addtempprefix" => {
             let prio = need(args, 1, "priority")?;
-            let text = need(args, 2, "prefix")?;
-            let dur = parse_duration(need(args, 3, "duration")?).map_err(fail)?;
-            let rest = [prio.to_string(), text.to_string()]
-                .into_iter()
-                .chain(args.iter().skip(4).cloned())
-                .collect::<Vec<_>>();
-            weighted(sender, name, true, &rest, Some(now_secs() + dur))
+            let dur = parse_duration(need(args, 2, "duration")?).map_err(fail)?;
+            let (text, rest) = split_text_and_ctx(&args[3..])?;
+            let mut rebuilt = vec![prio.to_string(), text];
+            rebuilt.extend(rest.iter().cloned());
+            weighted(sender, name, true, &rebuilt, Some(now_secs() + dur))
         }
         "addtempsuffix" => {
             let prio = need(args, 1, "priority")?;
-            let text = need(args, 2, "suffix")?;
-            let dur = parse_duration(need(args, 3, "duration")?).map_err(fail)?;
-            let rest = [prio.to_string(), text.to_string()]
-                .into_iter()
-                .chain(args.iter().skip(4).cloned())
-                .collect::<Vec<_>>();
-            weighted(sender, name, false, &rest, Some(now_secs() + dur))
+            let dur = parse_duration(need(args, 2, "duration")?).map_err(fail)?;
+            let (text, rest) = split_text_and_ctx(&args[3..])?;
+            let mut rebuilt = vec![prio.to_string(), text];
+            rebuilt.extend(rest.iter().cloned());
+            weighted(sender, name, false, &rebuilt, Some(now_secs() + dur))
         }
         other => {
             msg(sender, &format!("&cUnknown meta action '{other}'"));
@@ -404,7 +401,7 @@ fn editor(sender: &CommandSender, name: &str) -> Result<(), CommandError> {
 }
 
 fn listmembers(sender: &CommandSender, name: &str, page: usize) -> Result<(), CommandError> {
-    let members = with_store(|s| s.members_of(name));
+    let members = with_store_mut(|s| s.members_of(name));
     let (page, pages, slice) = page_of(&members, page, 12);
     msg(sender, &format!("&aMembers of {name} &7(page {page}/{pages}, {} total)", members.len()));
     for m in slice {
@@ -480,9 +477,10 @@ fn set_node(
     value: bool,
     expiry: Option<u64>,
     ctx: ContextSet,
+    temp_mod: Option<TempAdd>,
 ) -> Result<(), CommandError> {
     with_store_mut(|store| {
-        let temp = store.config.temp_add;
+        let temp = temp_mod.unwrap_or(store.config.temp_add);
         let g = store
             .group_mut(name)
             .ok_or_else(|| fail(format!("group '{name}' does not exist")))?;
@@ -497,16 +495,16 @@ fn set_node(
                         let mut node = node;
                         node.expiry = Some(merged);
                         g.add_node(node);
-                        store.mark_dirty();
+                        store.touch_group(name);
                         return Ok(());
                     }
-                    TempAdd::Replace => {}
+                    TempAdd::Replace | TempAdd::Shadow => {}
                 }
             }
         }
         g.add_node(node);
         store.remember(key);
-        store.mark_dirty();
+        store.touch_group(name);
         Ok(())
     })?;
     save();
@@ -542,7 +540,7 @@ where
             .group_mut(name)
             .ok_or_else(|| fail(format!("group '{name}' does not exist")))?;
         let n = f(g);
-        store.mark_dirty();
+        store.touch_group(name);
         Ok(n)
     })
 }

@@ -96,7 +96,15 @@ pub trait Holder {
         let nodes = self.nodes_mut();
         let before = nodes.len();
         nodes.retain(|n| {
-            !(n.key.eq_ignore_ascii_case(&key_l) && (ctx.is_empty() || n.ctx() == *ctx))
+            if !n.key.eq_ignore_ascii_case(&key_l) {
+                return true;
+            }
+            if ctx.is_empty() {
+                // LP: unset without context removes the global node only.
+                !n.ctx().is_empty()
+            } else {
+                n.ctx() != *ctx
+            }
         });
         before - nodes.len()
     }
@@ -106,9 +114,14 @@ pub trait Holder {
         let nodes = self.nodes_mut();
         let before = nodes.len();
         nodes.retain(|n| {
-            let match_key = n.key.eq_ignore_ascii_case(&key_l);
-            let match_ctx = ctx.is_empty() || n.ctx() == *ctx;
-            !(match_key && match_ctx && n.expiry.is_some())
+            if n.expiry.is_none() || !n.key.eq_ignore_ascii_case(&key_l) {
+                return true;
+            }
+            if ctx.is_empty() {
+                !n.ctx().is_empty()
+            } else {
+                n.ctx() != *ctx
+            }
         });
         before - nodes.len()
     }
@@ -128,12 +141,33 @@ pub trait Holder {
                 continue;
             }
             if let Some(g) = node.group_name() {
+                if !node.value {
+                    continue;
+                }
                 if !names.contains(&g) {
                     names.push(g);
                 }
             }
         }
         names
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ContextSet;
+    use crate::node::Node;
+
+    #[test]
+    fn unset_without_context_keeps_world_nodes() {
+        let mut u = User::new("id".into(), "Steve".into(), "default");
+        let mut world = ContextSet::empty();
+        world.set("world", "nether");
+        u.add_node(Node::perm("fly", true, &ContextSet::empty(), None));
+        u.add_node(Node::perm("fly", true, &world, None));
+        assert_eq!(u.remove_node("fly", &ContextSet::empty()), 1);
+        assert_eq!(u.nodes.iter().filter(|n| n.key == "fly").count(), 1);
     }
 }
 

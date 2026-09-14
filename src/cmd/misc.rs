@@ -13,7 +13,7 @@ pub fn info(sender: &CommandSender) {
             "&f{}\n&7server &f{}\n&7users &f{}\n&7groups &f{}\n&7tracks &f{}\n&7storage &fflatfile/json",
             env!("CARGO_PKG_VERSION"),
             s.config.server,
-            s.users().count(),
+            s.indexed_user_count(),
             s.groups().count(),
             s.tracks().count()
         )
@@ -36,8 +36,10 @@ pub fn check(sender: &CommandSender, server: &Server, args: &[String]) -> Result
     let node = need(args, 1, "permission")?;
     let extra = ContextSet::parse_trailing(&args[2..]).map_err(fail)?;
     let mut ctx = default_ctx(server, name);
-    for (k, v) in extra.pairs {
-        ctx.insert(k, v);
+    for (k, values) in extra.pairs {
+        for v in values {
+            ctx.insert(k.clone(), v);
+        }
     }
     let text = with_store_mut(|store| {
         let id = store.ensure_user(name, None);
@@ -127,7 +129,12 @@ pub fn tree(sender: &CommandSender, args: &[String]) -> Result<(), CommandError>
     } else {
         (false, args[0].as_str())
     };
-    let lines = with_store(|s| resolve::tree_lines(s, name, is_user));
+    let lines = with_store_mut(|s| {
+        if is_user {
+            let _ = s.load_named(name);
+        }
+        resolve::tree_lines(s, name, is_user)
+    });
     if lines.is_empty() {
         msg(sender, "&cNothing to show. Check the name.");
     } else {
@@ -141,7 +148,7 @@ pub fn tree(sender: &CommandSender, args: &[String]) -> Result<(), CommandError>
 pub fn search(sender: &CommandSender, args: &[String]) -> Result<(), CommandError> {
     let query = need(args, 0, "query")?;
     let page = parse_page(args, 1);
-    let hits = with_store(|s| s.search(query));
+    let hits = with_store_mut(|s| s.search(query));
     let (page, pages, slice) = page_of(&hits, page, 10);
     msg(sender, &format!("&aSearch '{query}' &7(page {page}/{pages}, {} hits)", hits.len()));
     for (holder, node, value) in slice {
@@ -151,7 +158,7 @@ pub fn search(sender: &CommandSender, args: &[String]) -> Result<(), CommandErro
 }
 
 pub fn editor(sender: &CommandSender) -> Result<(), CommandError> {
-    let dump = with_store(|s| s.export_dump());
+    let dump = with_store_mut(|s| s.export_dump());
     let path = write_export("editor.json", &dump)?;
     msg(sender, &format!("&aFull editor dump written to {path}"));
     msg(sender, "&7There's no hosted web editor on Pumpkin. Edit the json and /vcp applyedits it.");
@@ -160,7 +167,7 @@ pub fn editor(sender: &CommandSender) -> Result<(), CommandError> {
 
 pub fn export(sender: &CommandSender, args: &[String]) -> Result<(), CommandError> {
     let name = args.first().map(String::as_str).unwrap_or("export.json");
-    let dump = with_store(|s| s.export_dump());
+    let dump = with_store_mut(|s| s.export_dump());
     let path = write_export(name, &dump)?;
     msg(sender, &format!("&aExported to {path}"));
     Ok(())

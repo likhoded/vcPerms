@@ -12,4 +12,4 @@ Prefix, suffix and arbitrary meta are stored as nodes.
 
 Highest priority prefix/suffix wins. `/vcp user Steve meta info` lists what they actually hold. `/vcp user Steve info` shows the resolved ones if we can see a context.
 
-vcPerms does **not** rewrite chat unless `apply-chat-meta: true`. If another plugin already formats chat, leave it off and read the prefix over [IPC](API).
+vcPerms does **not** rewrite the chat message unless you want a nametag. With `apply-chat-meta: true` it sets the player's display name and tab list from prefix/suffix. If another plugin already formats chat, leave it off and read the prefix over [IPC](API).

@@ -20,7 +20,7 @@ pub fn handle(sender: &CommandSender, args: &[String]) -> Result<(), CommandErro
                     .track_mut(name)
                     .ok_or_else(|| fail(format!("track '{name}' does not exist")))?;
                 track.append(group);
-                store.mark_dirty();
+                store.touch_track(name);
                 Ok(())
             })?;
             save();
@@ -41,7 +41,7 @@ pub fn handle(sender: &CommandSender, args: &[String]) -> Result<(), CommandErro
                     .ok_or_else(|| fail(format!("track '{name}' does not exist")))?;
                 let idx = pos.saturating_sub(1);
                 track.insert(group, idx);
-                store.mark_dirty();
+                store.touch_track(name);
                 Ok(())
             })?;
             save();
@@ -55,7 +55,7 @@ pub fn handle(sender: &CommandSender, args: &[String]) -> Result<(), CommandErro
                     .track_mut(name)
                     .ok_or_else(|| fail(format!("track '{name}' does not exist")))?;
                 let ok = track.remove(group);
-                store.mark_dirty();
+                store.touch_track(name);
                 Ok(ok)
             })?;
             save();
@@ -72,7 +72,7 @@ pub fn handle(sender: &CommandSender, args: &[String]) -> Result<(), CommandErro
                     .track_mut(name)
                     .ok_or_else(|| fail(format!("track '{name}' does not exist")))?;
                 track.groups.clear();
-                store.mark_dirty();
+                store.touch_track(name);
                 Ok(())
             })?;
             save();

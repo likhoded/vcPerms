@@ -1,4 +1,5 @@
 use md5::{Digest, Md5};
+use pumpkin_plugin_api::permission::PermissionLevel;
 use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::text::TextComponent;
 use pumpkin_plugin_api::uuid::Uuid;
@@ -28,6 +29,13 @@ pub fn prefixed(text: &str, tag: &str, color: &str) -> TextComponent {
         .collect::<Vec<_>>()
         .join("\n");
     legacy(&tagged)
+}
+
+pub fn is_server_op(level: PermissionLevel) -> bool {
+    matches!(
+        level,
+        PermissionLevel::Two | PermissionLevel::Three | PermissionLevel::Four
+    )
 }
 
 pub fn player_uuid(player: &Player) -> String {

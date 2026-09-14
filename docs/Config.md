@@ -22,9 +22,9 @@ temporary-add-behaviour: deny
 | `allow-ops` | If vcPerms has no node for a check, keep the host/OP result |
 | `ops-override` | Treat OP as `*` unless a node actually matched |
 | `commands-allow-ops` | Let OP run `/vcp` so you can bootstrap |
-| `apply-chat-meta` | Prepend prefix/suffix to chat. Off by default |
+| `apply-chat-meta` | Set display name and tab list from prefix/suffix. Off by default |
 | `debug-logins` | Extra log line when a player is ensured |
-| `temporary-add-behaviour` | `deny`, `replace` or `accumulate` when `settemp` hits an existing temp node |
+| `temporary-add-behaviour` | `deny`, `replace`, `accumulate` or `shadow` when `settemp` hits an existing temp node |
 
 `/vcp reload` rereads this file and every holder json.
 

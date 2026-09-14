@@ -33,7 +33,7 @@
 
 `/vcp user <name|uuid> ...`
 
-`info`, `permission`, `parent`, `meta`, `editor`, `promote <track>`, `demote <track>`, `showtracks`, `clear [ctx...]`, `clone <other>`
+`info`, `permission`, `parent`, `meta`, `editor`, `promote <track>` (первая группа, если игрока на треке нет), `demote <track>`, `showtracks`, `clear [ctx...]`, `clone <other>`
 
 ### permission
 
@@ -68,7 +68,7 @@
 - `addprefix <priority> <text> [ctx...]`
 - `removeprefix <priority>`
 - `addsuffix` / `removesuffix`
-- `addtempprefix` / `addtempsuffix`
+- `addtempprefix <priority> <duration> <text>` / `addtempsuffix` (порядок как в LuckPerms; текст можно в кавычках)
 
 ## Группа
 

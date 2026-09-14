@@ -1,7 +1,7 @@
 use pumpkin_plugin_api::command::{CommandError, CommandSender};
 use pumpkin_plugin_api::Server;
 
-use crate::cmd::{default_ctx, msg, need, page_of, parse_page, save, usage_holder, usage_meta, usage_parent, usage_permission, usage_user_root};
+use crate::cmd::{default_ctx, msg, need, page_of, parse_page, parse_temp_mod, save, split_text_and_ctx, usage_holder, usage_meta, usage_parent, usage_permission, usage_user_root};
 use crate::config::TempAdd;
 use crate::context::ContextSet;
 use crate::holder::Holder;
@@ -89,7 +89,7 @@ fn permission(sender: &CommandSender, server: &Server, name: &str, args: &[Strin
             let node = need(args, 1, "node")?;
             let (value, rest) = split_bool(&args[2..]);
             let ctx = ContextSet::parse_trailing(rest).map_err(fail)?;
-            set_node(sender, name, node, value, None, ctx)
+            set_node(sender, name, node, value, None, ctx, None)
         }
         "unset" => {
             let node = need(args, 1, "node")?;
@@ -99,9 +99,10 @@ fn permission(sender: &CommandSender, server: &Server, name: &str, args: &[Strin
         "settemp" => {
             let node = need(args, 1, "node")?;
             let dur = parse_duration(need(args, 2, "duration")?).map_err(fail)?;
-            let (value, rest) = split_bool_skip_mod(&args[3..]);
+            let (temp_mod, rest) = parse_temp_mod(&args[3..]);
+            let (value, rest) = split_bool(rest);
             let ctx = ContextSet::parse_trailing(rest).map_err(fail)?;
-            set_node(sender, name, node, value, Some(now_secs() + dur), ctx)
+            set_node(sender, name, node, value, Some(now_secs() + dur), ctx, temp_mod)
         }
         "unsettemp" => {
             let node = need(args, 1, "node")?;
@@ -112,8 +113,10 @@ fn permission(sender: &CommandSender, server: &Server, name: &str, args: &[Strin
             let node = need(args, 1, "node")?;
             let extra = ContextSet::parse_trailing(&args[2..]).map_err(fail)?;
             let mut ctx = default_ctx(server, name);
-            for (k, v) in extra.pairs {
-                ctx.insert(k, v);
+            for (k, values) in extra.pairs {
+                for v in values {
+                    ctx.insert(k.clone(), v);
+                }
             }
             let text = with_store_mut(|store| {
                 let id = store.ensure_user(name, None);
@@ -142,7 +145,7 @@ fn permission(sender: &CommandSender, server: &Server, name: &str, args: &[Strin
                         && node.meta_parts().is_none()
                         && (ctx.is_empty() || node.ctx() == ctx)
                 });
-                store.mark_dirty();
+                store.touch_user(&id);
                 removed
             });
             save();
@@ -217,7 +220,7 @@ fn parent(sender: &CommandSender, _server: &Server, name: &str, args: &[String])
                 user.nodes.retain(|n| !n.is_group());
                 user.add_node(Node::group(group, &ContextSet::empty(), None));
                 user.primary_group = group.to_ascii_lowercase();
-                store.mark_dirty();
+                store.touch_user(&id);
                 Ok(())
             })?;
             save();
@@ -247,7 +250,7 @@ fn parent(sender: &CommandSender, _server: &Server, name: &str, args: &[String])
                     user.add_node(Node::group(&def, &ContextSet::empty(), None));
                     user.primary_group = def;
                 }
-                store.mark_dirty();
+                store.touch_user(&id);
                 removed
             });
             save();
@@ -261,7 +264,8 @@ fn parent(sender: &CommandSender, _server: &Server, name: &str, args: &[String])
                 let id = store.ensure_user(name, None);
                 let user = store.user_mut(&id).unwrap();
                 let removed = user.clear_matching(|n| n.group_name().map(|g| groups.contains(&g)).unwrap_or(false));
-                store.mark_dirty();
+                store.refresh_user_primary(&id);
+                store.touch_user(&id);
                 removed
             });
             save();
@@ -271,12 +275,23 @@ fn parent(sender: &CommandSender, _server: &Server, name: &str, args: &[String])
         "switchprimarygroup" => {
             let group = need(args, 1, "group")?;
             with_store_mut(|store| {
+                if store.group(group).is_none() {
+                    return Err(fail(format!("group '{group}' does not exist")));
+                }
                 let id = store.ensure_user(name, None);
+                let parents = store
+                    .user(&id)
+                    .ok_or_else(|| fail("user missing"))?
+                    .parents();
+                if !parents.iter().any(|p| p.eq_ignore_ascii_case(group)) {
+                    return Err(fail(format!("{name} is not a member of {group}")));
+                }
                 if let Some(user) = store.user_mut(&id) {
                     user.primary_group = group.to_ascii_lowercase();
-                    store.mark_dirty();
+                    store.touch_user(&id);
                 }
-            });
+                Ok(())
+            })?;
             save();
             msg(sender, &format!("&aPrimary group for {name} is now {group}"));
             Ok(())
@@ -297,7 +312,7 @@ fn parent(sender: &CommandSender, _server: &Server, name: &str, args: &[String])
                 user.nodes.retain(|n| n.group_name().map(|g| !groups.contains(&g)).unwrap_or(true));
                 user.add_node(Node::group(group, &ContextSet::empty(), None));
                 user.primary_group = group.to_ascii_lowercase();
-                store.mark_dirty();
+                store.touch_user(&id);
                 Ok(())
             })?;
             save();
@@ -325,7 +340,7 @@ fn meta(sender: &CommandSender, _server: &Server, name: &str, args: &[String]) -
             let key = need(args, 1, "key")?;
             let value = need(args, 2, "value")?;
             let ctx = ContextSet::parse_trailing(&args[3..]).map_err(fail)?;
-            set_node(sender, name, &format!("meta.{key}.{value}"), true, None, ctx)
+            set_node(sender, name, &format!("meta.{key}.{value}"), true, None, ctx, None)
         }
         "unset" => {
             let key = need(args, 1, "key")?;
@@ -336,7 +351,7 @@ fn meta(sender: &CommandSender, _server: &Server, name: &str, args: &[String]) -
             let value = need(args, 2, "value")?;
             let dur = parse_duration(need(args, 3, "duration")?).map_err(fail)?;
             let ctx = ContextSet::parse_trailing(&args[4..]).map_err(fail)?;
-            set_node(sender, name, &format!("meta.{key}.{value}"), true, Some(now_secs() + dur), ctx)
+            set_node(sender, name, &format!("meta.{key}.{value}"), true, Some(now_secs() + dur), ctx, None)
         }
         "unsettemp" => {
             let key = need(args, 1, "key")?;
@@ -348,19 +363,19 @@ fn meta(sender: &CommandSender, _server: &Server, name: &str, args: &[String]) -
         "removesuffix" => remove_weighted(sender, name, false, &args[1..]),
         "addtempprefix" => {
             let prio = need(args, 1, "priority")?;
-            let text = need(args, 2, "prefix")?;
-            let dur = parse_duration(need(args, 3, "duration")?).map_err(fail)?;
-            let mut rest = vec![prio.to_string(), text.to_string()];
-            rest.extend(args.iter().skip(4).cloned());
-            add_weighted(sender, name, true, &rest, Some(now_secs() + dur))
+            let dur = parse_duration(need(args, 2, "duration")?).map_err(fail)?;
+            let (text, rest) = split_text_and_ctx(&args[3..])?;
+            let mut rebuilt = vec![prio.to_string(), text];
+            rebuilt.extend(rest.iter().cloned());
+            add_weighted(sender, name, true, &rebuilt, Some(now_secs() + dur))
         }
         "addtempsuffix" => {
             let prio = need(args, 1, "priority")?;
-            let text = need(args, 2, "suffix")?;
-            let dur = parse_duration(need(args, 3, "duration")?).map_err(fail)?;
-            let mut rest = vec![prio.to_string(), text.to_string()];
-            rest.extend(args.iter().skip(4).cloned());
-            add_weighted(sender, name, false, &rest, Some(now_secs() + dur))
+            let dur = parse_duration(need(args, 2, "duration")?).map_err(fail)?;
+            let (text, rest) = split_text_and_ctx(&args[3..])?;
+            let mut rebuilt = vec![prio.to_string(), text];
+            rebuilt.extend(rest.iter().cloned());
+            add_weighted(sender, name, false, &rebuilt, Some(now_secs() + dur))
         }
         other => {
             msg(sender, &format!("&cUnknown meta action '{other}'"));
@@ -409,7 +424,7 @@ fn add_weighted(
     with_store_mut(|store| {
         let id = store.ensure_user(name, None);
         store.user_mut(&id).unwrap().add_node(node);
-        store.mark_dirty();
+        store.touch_user(&id);
     });
     save();
     msg(sender, &format!("&aUpdated {} for {name}", if prefix { "prefix" } else { "suffix" }));
@@ -426,7 +441,7 @@ fn remove_weighted(sender: &CommandSender, name: &str, prefix: bool, args: &[Str
             let parts = if prefix { node.prefix_parts() } else { node.suffix_parts() };
             parts.map(|(p, _)| p == prio).unwrap_or(false)
         });
-        store.mark_dirty();
+        store.touch_user(&id);
         removed
     });
     save();
@@ -455,24 +470,40 @@ fn shift(sender: &CommandSender, name: &str, args: &[String], up: bool) -> Resul
         let id = store.ensure_user(name, None);
         let current = {
             let user = store.user(&id).unwrap();
-            user.parents()
-                .into_iter()
-                .find(|g| track.contains(g))
-                .or_else(|| track.groups.first().cloned())
+            user.parents().into_iter().find(|g| track.contains(g))
         };
-        let Some(current) = current else {
+        if track.groups.is_empty() {
             return Err(fail("track is empty"));
+        }
+        let next = if let Some(ref current) = current {
+            if up {
+                track.next(current)
+            } else {
+                track.prev(current)
+            }
+        } else if up {
+            track.groups.first().cloned()
+        } else {
+            return Err(fail("not on this track"));
         };
-        let next = if up { track.next(&current) } else { track.prev(&current) };
         let Some(next) = next else {
-            return Err(fail(if up { "already at the top of the track" } else { "already at the bottom of the track" }));
+            return Err(fail(if up {
+                "already at the top of the track"
+            } else {
+                "already at the bottom of the track"
+            }));
         };
-        let user = store.user_mut(&id).unwrap();
-        user.nodes.retain(|n| n.group_name().as_deref() != Some(current.as_str()));
-        user.add_node(Node::group(&next, &ContextSet::empty(), None));
-        user.primary_group = next.clone();
-        store.mark_dirty();
-        Ok((current, next))
+        {
+            let user = store.user_mut(&id).unwrap();
+            if let Some(current) = current.as_deref() {
+                user.nodes
+                    .retain(|n| n.group_name().as_deref() != Some(current));
+            }
+            user.add_node(Node::group(&next, &ContextSet::empty(), None));
+        }
+        store.refresh_user_primary(&id);
+        store.touch_user(&id);
+        Ok((current.unwrap_or_else(|| "(none)".into()), next))
     })?;
     save();
     msg(sender, &format!("&a{} {name}: {} -> {}", if up { "Promoted" } else { "Demoted" }, result.0, result.1));
@@ -514,7 +545,7 @@ fn clear(sender: &CommandSender, name: &str, args: &[String]) -> Result<(), Comm
             user.add_node(Node::group(&def, &ContextSet::empty(), None));
             user.primary_group = def;
         }
-        store.mark_dirty();
+        store.touch_user(&id);
     });
     save();
     msg(sender, &format!("&aCleared nodes for {name}"));
@@ -536,9 +567,10 @@ fn set_node(
     value: bool,
     expiry: Option<u64>,
     ctx: ContextSet,
+    temp_mod: Option<TempAdd>,
 ) -> Result<(), CommandError> {
     with_store_mut(|store| {
-        let temp = store.config.temp_add;
+        let temp = temp_mod.unwrap_or(store.config.temp_add);
         let id = store.ensure_user(name, None);
         let user = store.user_mut(&id).unwrap();
         let node = Node::perm(key, value, &ctx, expiry);
@@ -554,16 +586,16 @@ fn set_node(
                         let mut node = node;
                         node.expiry = Some(merged);
                         user.add_node(node);
-                        store.mark_dirty();
+                        store.touch_user(&id);
                         return Ok(());
                     }
-                    TempAdd::Replace => {}
+                    TempAdd::Replace | TempAdd::Shadow => {}
                 }
             }
         }
         user.add_node(node);
         store.remember(key);
-        store.mark_dirty();
+        store.touch_user(&id);
         Ok(())
     })?;
     save();
@@ -584,7 +616,8 @@ fn add_parent(
         }
         let id = store.ensure_user(name, None);
         store.user_mut(&id).unwrap().add_node(Node::group(group, &ctx, expiry));
-        store.mark_dirty();
+        store.refresh_user_primary(&id);
+        store.touch_user(&id);
         Ok(())
     })?;
     save();
@@ -607,7 +640,8 @@ fn unset_node(
         } else {
             user.remove_node(key, &ctx)
         };
-        store.mark_dirty();
+        store.refresh_user_primary(&id);
+        store.touch_user(&id);
         n
     });
     save();
@@ -622,7 +656,7 @@ fn unset_prefix(sender: &CommandSender, name: &str, prefix: &str, temp_only: boo
         let removed = user.clear_matching(|n| {
             n.key.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()) && (!temp_only || n.expiry.is_some())
         });
-        store.mark_dirty();
+        store.touch_user(&id);
         removed
     });
     save();
@@ -650,16 +684,8 @@ fn split_bool(args: &[String]) -> (bool, &[String]) {
     }
 }
 
-fn split_bool_skip_mod(args: &[String]) -> (bool, &[String]) {
-    let args = skip_mod(args);
-    split_bool(args)
-}
-
 fn skip_mod(args: &[String]) -> &[String] {
-    match args.first().map(|s| s.to_ascii_lowercase()).as_deref() {
-        Some("accumulate") | Some("replace") | Some("shadow") | Some("deny") => &args[1..],
-        _ => args,
-    }
+    crate::cmd::parse_temp_mod(args).1
 }
 
 fn fail(e: impl ToString) -> CommandError {

@@ -55,7 +55,7 @@ Resolution order: name via `uuidcache.json`, then uuid lookup, then a case-insen
 
 IPC **does not create** holders. A name that never joined and was never touched by `/vcp user` is `unknown user`. `/vcp user <name> info` and a real join both create the file.
 
-Queries use the **global** context from `config.yml` (static server keys only). They do not see the player’s current world or dimension. For a live in-world check, use the host API — see [§6](#6-host-permission-checks).
+Queries use the global context from `config.yml`, plus optional `world` / `dimension` on the request. If those fields are missing, the last world the player was in (join / world change) is used.
 
 ---
 
@@ -80,6 +80,8 @@ Resolve one permission for a stored user. Same matching rules as a host `hasPerm
 | `op` | string | `check` |
 | `user` | string | name or uuid |
 | `permission` | string | node to test |
+| `world` | string | optional world name |
+| `dimension` | string | optional dimension |
 
 **Response**
 

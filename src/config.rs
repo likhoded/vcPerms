@@ -17,6 +17,7 @@ pub enum TempAdd {
     Deny,
     Replace,
     Accumulate,
+    Shadow,
 }
 
 impl Default for Config {
@@ -72,7 +73,7 @@ apply-chat-meta: false
 debug-logins: false
 
 # What happens if you settemp a node that already exists.
-# deny | replace | accumulate
+# deny | replace | accumulate | shadow
 temporary-add-behaviour: deny
 "#;
 
@@ -100,6 +101,7 @@ fn parse(raw: &str) -> Config {
                 cfg.temp_add = match val.to_ascii_lowercase().as_str() {
                     "replace" => TempAdd::Replace,
                     "accumulate" => TempAdd::Accumulate,
+                    "shadow" => TempAdd::Shadow,
                     _ => TempAdd::Deny,
                 };
             }

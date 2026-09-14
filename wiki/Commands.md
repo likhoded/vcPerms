@@ -33,7 +33,7 @@ Quoted strings are allowed: `/vcp group admin meta addprefix 100 "&c[Admin] "`
 
 `/vcp user <name|uuid> ...`
 
-`info`, `permission`, `parent`, `meta`, `editor`, `promote <track>`, `demote <track>`, `showtracks`, `clear [ctx...]`, `clone <other>`
+`info`, `permission`, `parent`, `meta`, `editor`, `promote <track>` (first group if they aren't on the track), `demote <track>`, `showtracks`, `clear [ctx...]`, `clone <other>`
 
 ### permission
 
@@ -68,7 +68,7 @@ Quoted strings are allowed: `/vcp group admin meta addprefix 100 "&c[Admin] "`
 - `addprefix <priority> <text> [ctx...]`
 - `removeprefix <priority>`
 - `addsuffix` / `removesuffix`
-- `addtempprefix` / `addtempsuffix`
+- `addtempprefix <priority> <duration> <text>` / `addtempsuffix` (LuckPerms order; text may be quoted)
 
 ## Group
 

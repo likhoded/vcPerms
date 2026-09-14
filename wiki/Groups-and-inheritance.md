@@ -11,7 +11,7 @@ Users don't usually hold dozens of nodes. They sit in a group, the group sits on
 /vcp user Alex parent add member
 ```
 
-`parent add` is additive. `parent set` wipes every other `group.*` node first.
+`parent add` is additive. `parent set` wipes every other `group.*` node first. A `group.X` node with `value: false` does not inherit that group.
 
 Weight is only used when two inherited nodes fight:
 

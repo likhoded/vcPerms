@@ -6,7 +6,6 @@ mod user;
 
 use pumpkin_plugin_api::command::{Arg, CommandError, CommandSender, CommandSuggestion, CommandSuggestions, ConsumedArgs, SuggestionRequest};
 use pumpkin_plugin_api::commands::{CommandHandler, CommandSuggestionHandler};
-use pumpkin_plugin_api::permission::PermissionLevel;
 use pumpkin_plugin_api::{Server, player::Player};
 
 use crate::context::ContextSet;
@@ -218,6 +217,7 @@ pub fn usage_meta(sender: &CommandSender, kind: &str, name: &str) {
              &7/vcp {kind} {name} meta settemp <key> <value> <duration> [ctx...]\n\
              &7/vcp {kind} {name} meta addprefix <priority> <text>\n\
              &7/vcp {kind} {name} meta addsuffix <priority> <text>\n\
+             &7/vcp {kind} {name} meta addtempprefix <priority> <duration> <text>\n\
              &7/vcp {kind} {name} meta removeprefix|removesuffix <priority>"
         ),
     );
@@ -255,7 +255,7 @@ fn can_run(sender: &CommandSender, server: &Server, head: &str, args: &[String])
         return true;
     };
     let needed = command_node(head, args);
-    let allowed = with_store(|store| {
+    let allowed = with_store_mut(|store| {
         let uuid = player_uuid(&player);
         let user = store.user(&uuid).cloned();
         let ctx = ContextSet::for_player(&player, &store.config);
@@ -271,13 +271,7 @@ fn can_run(sender: &CommandSender, server: &Server, head: &str, args: &[String])
                 return true;
             }
         }
-        let op = matches!(
-            player.get_permission_level(),
-            PermissionLevel::One
-                | PermissionLevel::Two
-                | PermissionLevel::Three
-                | PermissionLevel::Four
-        );
+        let op = crate::util::is_server_op(player.get_permission_level());
         if store.config.commands_allow_ops && op {
             return true;
         }
@@ -292,20 +286,47 @@ fn can_run(sender: &CommandSender, server: &Server, head: &str, args: &[String])
 
 fn command_node(head: &str, args: &[String]) -> String {
     let action = args.get(2).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    let verb = args.get(3).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
     match head {
         "user" => match action.as_str() {
-            "permission" => "vcperms.user.permission.set".into(),
-            "parent" => "vcperms.user.parent.add".into(),
-            "meta" => "vcperms.user.meta.set".into(),
+            "permission" => match verb.as_str() {
+                "unset" | "unsettemp" | "clear" => "vcperms.user.permission.unset".into(),
+                "check" | "info" => "vcperms.user.permission.check".into(),
+                _ => "vcperms.user.permission.set".into(),
+            },
+            "parent" => match verb.as_str() {
+                "remove" | "removetemp" | "clear" | "cleartrack" => {
+                    "vcperms.user.parent.remove".into()
+                }
+                _ => "vcperms.user.parent.add".into(),
+            },
+            "meta" => match verb.as_str() {
+                "unset" | "unsettemp" | "removeprefix" | "removesuffix" => {
+                    "vcperms.user.meta.unset".into()
+                }
+                _ => "vcperms.user.meta.set".into(),
+            },
             "promote" => "vcperms.user.promote".into(),
             "demote" => "vcperms.user.demote".into(),
             "info" => "vcperms.user.info".into(),
             _ => "vcperms.user.info".into(),
         },
         "group" => match action.as_str() {
-            "permission" => "vcperms.group.permission.set".into(),
-            "parent" => "vcperms.group.parent.add".into(),
-            "meta" => "vcperms.group.meta.set".into(),
+            "permission" => match verb.as_str() {
+                "unset" | "unsettemp" | "clear" => "vcperms.group.permission.unset".into(),
+                "info" => "vcperms.group.info".into(),
+                _ => "vcperms.group.permission.set".into(),
+            },
+            "parent" => match verb.as_str() {
+                "remove" | "removetemp" | "clear" => "vcperms.group.parent.remove".into(),
+                _ => "vcperms.group.parent.add".into(),
+            },
+            "meta" => match verb.as_str() {
+                "unset" | "unsettemp" | "removeprefix" | "removesuffix" => {
+                    "vcperms.group.meta.unset".into()
+                }
+                _ => "vcperms.group.meta.set".into(),
+            },
             _ => "vcperms.group.info".into(),
         },
         "track" => "vcperms.track.info".into(),
@@ -507,5 +528,29 @@ pub fn read_data_file(name: &str) -> Result<String, CommandError> {
 }
 
 pub fn save() {
-    with_store_mut(|s| s.save_all());
+    with_store_mut(|s| s.save_if_dirty());
+}
+
+pub fn parse_temp_mod(args: &[String]) -> (Option<crate::config::TempAdd>, &[String]) {
+    match args.first().map(|s| s.to_ascii_lowercase()).as_deref() {
+        Some("accumulate") => (Some(crate::config::TempAdd::Accumulate), &args[1..]),
+        Some("replace") => (Some(crate::config::TempAdd::Replace), &args[1..]),
+        Some("shadow") => (Some(crate::config::TempAdd::Shadow), &args[1..]),
+        Some("deny") => (Some(crate::config::TempAdd::Deny), &args[1..]),
+        _ => (None, args),
+    }
+}
+
+pub fn split_text_and_ctx(args: &[String]) -> Result<(String, &[String]), CommandError> {
+    if args.is_empty() {
+        return Err(CommandError::CommandFailed(chat("&cMissing prefix/suffix text")));
+    }
+    let mut i = 0;
+    while i < args.len() && !args[i].contains('=') {
+        i += 1;
+    }
+    if i == 0 {
+        return Err(CommandError::CommandFailed(chat("&cMissing prefix/suffix text")));
+    }
+    Ok((args[..i].join(" "), &args[i..]))
 }
